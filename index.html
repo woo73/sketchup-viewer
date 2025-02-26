@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+    <div style="position: fixed; top: 10px; left: 200px; z-index: 100;">
+        <select id="toggleParts" onchange="togglePart(this.value)">
+            <option value="">选择部件</option>
+            <option value="roof">屋顶</option>
+            <option value="wall">墙体</option>
+        </select>
+    </div>
+    <input type="color" id="colorPicker" onchange="changeMaterialColor(this.value)">
+    <button onclick="applyColorToPart('wall')">修改墙体颜色</button>
+    <div id="measureResult" style="position: fixed; top: 100px; left: 10px; color: white;"></div>
+<head>
+    <title>SketchUp模型预览</title>
+    <style>
+        body { 
+            margin: 0;          /* 去除页面默认边距 */
+            overflow: hidden;   /* 隐藏滚动条 */
+        }
+        canvas { 
+            display: block; 
+        }
+    </style>
+</head>
+<body>
+    <!-- 引入Three.js库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- 引入OrbitControls（摄像机控制插件） -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- 引入GLTFLoader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <!-- 新增UI按钮 -->
+    <div style="position: fixed; top: 10px; left: 10px; z-index: 100;">
+        <button onclick="resetCamera()">重置视角</button>
+        <button onclick="toggleWireframe()">切换线框模式</button>
+    </div>
+    <div id="info" style="position: fixed; top: 50px; left: 10px; color: white;"></div>
+
+    <script>
+        // 全局变量定义
+        let scene, camera, renderer, controls, gltfModel;// 用于保存加载的模型引用
+
+        // 初始化函数
+        function init() {
+            // 1. 创建场景、相机、渲染器
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(
+                75,                                   // 视角
+                window.innerWidth / window.innerHeight, // 宽高比
+                0.1,                                  // 近裁剪面
+                1000                                  // 远裁剪面
+            );
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true                      // 开启抗锯齿
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 2. 添加光源（否则模型可能显示为黑色）
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+
+            // 3. 加载模型
+            const loader = new THREE.GLTFLoader();
+            loader.load(
+                'model.glb', // 模型路径（确保文件名与你的模型一致！）
+                (gltf) => {
+                    gltfModel = gltf.scene; // 保存模型引用
+                    // --- 自动适配模型尺寸 ---
+                    scene.add(gltf.scene);
+                    // 计算模型包围盒
+                    const box = new THREE.Box3().setFromObject(gltf.scene);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3());
+                    console.log("模型尺寸：", size);
+
+                    // 自动调整相机位置和控制器焦点
+                    camera.position.copy(center);
+                    camera.position.z += size.length() * 1.5; // 根据模型大小调整距离
+                    controls.target.copy(center); // 让操作焦点对准模型中心
+                    console.log("模型加载成功！");
+                    // --- 新增点击事件监听 ---
+                    renderer.domElement.addEventListener('click', (event) => {
+                        // 将鼠标点击位置转换为标准化坐标
+                        const mouse = new THREE.Vector2();
+                        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                        // 创建射线投射器
+                        const raycaster = new THREE.Raycaster();
+                        raycaster.setFromCamera(mouse, camera);
+                        // 检测与模型相交的物体
+                        const intersects = raycaster.intersectObjects(gltf.scene.children, true);
+                        if (intersects.length > 0) {
+                            const clickedObject = intersects[0].object;
+                            console.log("点击的物体名称：", clickedObject.name);
+                            // 可选：在网页上显示信息
+                            alert(`点击了物体：${clickedObject.name || '未命名'}`);
+                        }
+                    });
+                    // 显示模型边界框
+                    const boxHelper = new THREE.BoxHelper(gltf.scene, 0x00ff00);
+                    scene.add(boxHelper);
+                },
+                (progress) => {
+                    console.log(`加载进度：${(progress.loaded / progress.total * 100).toFixed(2)}%`);
+                },
+                (error) => {
+                    console.error("模型加载失败:", error);
+                }
+            );
+
+            // 4. 设置相机初始位置
+            camera.position.set(0, 2, 5); // (x, y, z)
+
+            // 5. 添加交互控制
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;   // 启用阻尼（更流畅的操作）
+            controls.dampingFactor = 0.05;
+
+            // 6. 窗口大小变化响应
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        // 窗口大小变化回调函数
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // 仅当启用阻尼时需要
+            renderer.render(scene, camera);
+        }
+
+        // --- 新增UI按钮的回调函数 ---
+        function resetCamera() {
+            controls.reset(); // 重置视角
+            camera.position.copy(center); // 如果之前有自动适配代码中的center变量
+            camera.position.z += size.length() * 1.5;
+        }
+
+        function toggleWireframe() {
+            gltfModel.traverse((child) => {
+                if (child.isMesh) {
+                    child.material.wireframe = !child.material.wireframe;
+                }
+            });
+            document.getElementById('info').innerText = 
+                `线框模式：${gltfModel.children[0].material.wireframe ? '开启' : '关闭'}`;
+        }
+        // 模型部件显隐控制
+        function togglePart(partName) {
+            gltfModel.traverse((child) => {
+                 if (child.name === partName) {
+                      child.visible = !child.visible;
+                    }
+                });
+            }
+
+        // 启动
+        init();
+        animate();
+    </script>
+</body>
+</html>
