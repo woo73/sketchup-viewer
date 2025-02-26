@@ -1,15 +1,27 @@
 <!DOCTYPE html>
 <html>
-    <div style="position: fixed; top: 10px; left: 200px; z-index: 100;">
-        <select id="toggleParts" onchange="togglePart(this.value)">
-            <option value="">选择部件</option>
-            <option value="roof">屋顶</option>
-            <option value="wall">墙体</option>
-        </select>
+    <div style="position: fixed; top: 150px; left: 10px; z-index: 100; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px;">
+        <input type="file" id="modelUpload" accept=".glb,.gltf" style="display: none;" onchange="loadNewModel(this.files[0])">
+        <label for="modelUpload" style="color: white; cursor: pointer;">📤 上传新模型</label>
+        <div id="upload-status" style="color: #aaa; font-size: 12px; margin-top: 5px;"></div>
     </div>
-    <input type="color" id="colorPicker" onchange="changeMaterialColor(this.value)">
-    <button onclick="applyColorToPart('wall')">修改墙体颜色</button>
-    <div id="measureResult" style="position: fixed; top: 100px; left: 10px; color: white;"></div>
+    <!-- 信息展示框 -->
+    <div id="info-panel" style="
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 15px;
+    border-radius: 5px;
+    max-width: 300px;
+    display: none; /* 默认隐藏 */
+    z-index: 100;
+">
+    <h3 style="margin:0 0 10px 0;">物体信息</h3>
+    <div id="info-content"></div>
+</div>
+    <div id="measureResult" style="position: fixed; top: 500px; left: 10px; color: white;"></div>
 <head>
     <title>SketchUp模型预览</title>
     <style>
@@ -30,7 +42,7 @@
     <!-- 引入GLTFLoader -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <!-- 新增UI按钮 -->
-    <div style="position: fixed; top: 10px; left: 10px; z-index: 100;">
+    <div style="position: fixed; top: 50px; left: 10px; z-index: 100;">
         <button onclick="resetCamera()">重置视角</button>
         <button onclick="toggleWireframe()">切换线框模式</button>
     </div>
@@ -82,23 +94,22 @@
                     camera.position.z += size.length() * 1.5; // 根据模型大小调整距离
                     controls.target.copy(center); // 让操作焦点对准模型中心
                     console.log("模型加载成功！");
-                    // --- 新增点击事件监听 ---
+                    // --- 点击事件监听（更新版）---
                     renderer.domElement.addEventListener('click', (event) => {
-                        // 将鼠标点击位置转换为标准化坐标
                         const mouse = new THREE.Vector2();
                         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
                         mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-                        // 创建射线投射器
+
                         const raycaster = new THREE.Raycaster();
                         raycaster.setFromCamera(mouse, camera);
-                        // 检测与模型相交的物体
+                        
                         const intersects = raycaster.intersectObjects(gltf.scene.children, true);
+                        
                         if (intersects.length > 0) {
                             const clickedObject = intersects[0].object;
-                            console.log("点击的物体名称：", clickedObject.name);
-                            // 可选：在网页上显示信息
-                            alert(`点击了物体：${clickedObject.name || '未命名'}`);
+                            showObjectInfo(clickedObject); // 显示信息
                         }
+                        
                     });
                     // 显示模型边界框
                     const boxHelper = new THREE.BoxHelper(gltf.scene, 0x00ff00);
@@ -162,6 +173,105 @@
                     }
                 });
             }
+            let highlightedObject = null;
+
+            function showObjectInfo(object) {
+                // 移除旧高亮
+                if (highlightedObject) {
+                     highlightedObject.material.emissive?.setHex(0x000000);
+                }
+
+                // 添加新高亮
+                 if (object.material) {
+                    object.material.emissive?.setHex(0xFF0000); // 红色高亮
+                    highlightedObject = object;
+                     }
+            // --- 新增模型上传功能 ---
+            function loadNewModel(file) {
+                 if (!file) return;
+
+                const loader = new THREE.GLTFLoader();
+                const reader = new FileReader();
+    
+                reader.onload = (event) => {
+                    // 1. 清除旧模型及其相关资源
+                     if (gltfModel) {
+                        scene.remove(gltfModel);
+                        disposeHierarchy(gltfModel); // 释放内存
+                    }
+
+                     // 2. 加载新模型
+                    loader.parse(
+                        event.target.result,
+                         '',
+                        (gltf) => {
+                            gltfModel = gltf.scene;
+                            scene.add(gltfModel);
+
+                            // 3. 适配相机视角
+                            fitCameraToModel(gltfModel);
+
+                            // 4. 重新绑定交互事件
+                            bindModelInteractions(gltfModel);
+                        },
+                        (error) => {
+                            console.error("模型加载失败:", error);
+                        }
+                    );
+                };
+
+    reader.onerror = (error) => {
+        console.error("文件读取失败:", error);
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+            // 信息展示函数
+                // 1. 查找有效名称（可能父级有名称）    
+                let target = object;
+                while (target && !target.name) {
+                    target = target.parent;
+                }
+                const name = target?.name || "未命名物体";
+
+                // 2. 获取材质信息
+                const materials = [];
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                         materials.push(...object.material.map(mat => mat.type));
+                     } else {
+                         materials.push(object.material.type);
+                     }
+                }
+
+                // 3. 计算包围盒尺寸
+                const bbox = new THREE.Box3().setFromObject(object);
+                const size = new THREE.Vector3();
+                bbox.getSize(size);
+                const dimensions = `宽: ${size.x.toFixed(2)}m, 高: ${size.y.toFixed(2)}m, 深: ${size.z.toFixed(2)}m`;
+
+                // 4. 构建HTML内容
+                const content = `
+                    <p><strong>名称:</strong> ${name}</p>
+                    <p><strong>材质:</strong> ${materials.join(', ')}</p>
+                    <p><strong>尺寸:</strong> ${dimensions}</p>
+                    <!-- 新增自定义元数据 -->
+                     ${object.userData.materialType ? `<p><strong>材料类型:</strong> ${object.userData.materialType}</p>` : ''}
+                     ${object.userData.price ? `<p><strong>价格:</strong> ${object.userData.price}元</p>` : ''}
+                `;
+
+                // 5. 更新UI
+                const infoPanel = document.getElementById('info-panel');
+                const infoContent = document.getElementById('info-content');
+                infoContent.innerHTML = content;
+                infoPanel.style.display = 'block';
+
+                // 6. 5秒后自动隐藏
+                clearTimeout(infoPanel.timeout);
+                infoPanel.timeout = setTimeout(() => {
+                    infoPanel.style.display = 'none';
+                }, 5000);
+            }    
 
         // 启动
         init();
