@@ -111,6 +111,7 @@
                         }
                         
                     });
+                    
                     // 显示模型边界框
                     const boxHelper = new THREE.BoxHelper(gltf.scene, 0x00ff00);
                     scene.add(boxHelper);
@@ -186,6 +187,7 @@
                     object.material.emissive?.setHex(0xFF0000); // 红色高亮
                     highlightedObject = object;
                      }
+            }
             // --- 新增模型上传功能 ---
             function loadNewModel(file) {
                  if (!file) return;
@@ -207,10 +209,8 @@
                         (gltf) => {
                             gltfModel = gltf.scene;
                             scene.add(gltfModel);
-
                             // 3. 适配相机视角
                             fitCameraToModel(gltfModel);
-
                             // 4. 重新绑定交互事件
                             bindModelInteractions(gltfModel);
                         },
@@ -219,13 +219,11 @@
                         }
                     );
                 };
-
-    reader.onerror = (error) => {
+                reader.onerror = (error) => {
         console.error("文件读取失败:", error);
-    };
+        };
 
     reader.readAsArrayBuffer(file);
-}
             // 信息展示函数
                 // 1. 查找有效名称（可能父级有名称）    
                 let target = object;
@@ -271,11 +269,78 @@
                 infoPanel.timeout = setTimeout(() => {
                     infoPanel.style.display = 'none';
                 }, 5000);
+                // 新增辅助函数
+function fitCameraToModel(model) {
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    
+    camera.position.copy(center);
+    camera.position.z += size.length() * 1.5;
+    controls.target.copy(center);
+}
+
+function bindModelInteractions(model) {
+    // 先移除旧的点击事件
+    renderer.domElement.removeEventListener('click', modelClickHandler);
+    
+    // 定义新的事件处理器
+    const modelClickHandler = (event) => {
+        const mouse = new THREE.Vector2();
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+        
+        // 关键修改：检测整个模型树，开启递归检测
+        const intersects = raycaster.intersectObjects(model.children, true);
+        
+        if (intersects.length > 0) {
+            const clickedObject = intersects[0].object;
+            showObjectInfo(clickedObject);
+        }
+    };
+
+    // 绑定新事件
+    renderer.domElement.addEventListener('click', modelClickHandler);
+}
+
+// 修改showObjectInfo增强兼容性
+function showObjectInfo(object) {
+    // 安全访问材质属性
+    const materials = [];
+    try {
+        if (object.material) {
+            materials.push(Array.isArray(object.material) ? 
+                object.material.map(m => m?.type || '未知材质') : 
+                object.material?.type || '未知材质');
+        }
+    } catch (e) {
+        console.warn('材质信息读取失败:', e);
+    }
+}
+
+function disposeHierarchy(node) {
+    if (node.isMesh) {
+        if (node.geometry) node.geometry.dispose();
+        if (node.material) {
+            if (Array.isArray(node.material)) {
+                node.material.forEach(mat => mat.dispose());
+            } else {
+                node.material.dispose();
+            }
+        }
+    }
+    node.children?.forEach(child => disposeHierarchy(child));
+}
             }    
+            
 
         // 启动
         init();
         animate();
+        
     </script>
 </body>
 </html>
